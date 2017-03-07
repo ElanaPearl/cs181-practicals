@@ -76,6 +76,7 @@ except ImportError:
 import numpy as np
 from scipy import sparse
 from sklearn.naive_bayes import GaussianNB
+import cPickle as pickle
 
 import util
 
@@ -209,7 +210,17 @@ def first_last_system_call_feats(tree):
     return c
 
 def num_system_call_feats(tree):
-    return Counter([i.tag for i in test_tree.iter()])
+    return Counter([i.tag for i in tree.iter()])
+
+def num_system_call_bifeats(tree):
+    # TODO: try only using system calls within all_section
+    bi_calls = []
+    last_process = None
+    for curr_process in tree.iter():
+        if last_process:
+            bi_calls.append((last_process, curr_process.tag))
+        last_process = curr_process.tag
+    return Counter(bi_calls)
 
 
 def system_call_count_feats(tree):
@@ -240,11 +251,18 @@ def main():
     outputfile = "mypredictions.csv"  # feel free to change this or take it as an argument
     
     # TODO put the names of the feature functions you've defined above in this list
-    ffs = [first_last_system_call_feats, system_call_count_feats, num_system_call_feats]
+    ffs = [first_last_system_call_feats, system_call_count_feats]
     
     # extract features
     print "extracting training features..."
     X_train,global_feat_dict,t_train,train_ids = extract_feats(ffs, train_dir)
+
+    with open('X_train.pkl','w') as f:
+        pickle.dump(X_train, f)
+
+    with open('t_train.pkl','w') as f:
+        pickle.dump(t_train, f)
+
     print "done extracting training features"
     print
     
@@ -266,7 +284,13 @@ def main():
     X_test,_,t_ignore,test_ids = extract_feats(ffs, test_dir, global_feat_dict=global_feat_dict)
     print "done extracting test features"
     print
+
+    with open('X_test.pkl','w') as f:
+        pickle.dump(X_test, f)
     
+    with open('test_ids.pkl','w') as f:
+        pickle.dump(test_ids, f)
+
     print "making predictions..."
     preds = gnb.predict(X_test.todense())
 
