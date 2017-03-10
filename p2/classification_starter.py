@@ -76,6 +76,11 @@ except ImportError:
 import numpy as np
 from scipy import sparse
 from sklearn.naive_bayes import GaussianNB
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.cross_validation import cross_val_score
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.grid_search import GridSearchCV
+
 import cPickle as pickle
 
 import util
@@ -174,11 +179,12 @@ def make_design_mat(fds, global_feat_dict=None):
                    shape=(len(fds), len(feat_dict)))
     return X, feat_dict
     
-
+### Wooooo Features!! #ItsLit
 ## Here are two example feature-functions. They each take an xml.etree.ElementTree object, 
 # (i.e., the result of parsing an xml file) and returns a dictionary mapping 
 # feature-names to numeric values.
 ## TODO: modify these functions, and/or add new ones.
+# First and Last system calls of a .xml file
 def first_last_system_call_feats(tree):
     """
     arguments:
@@ -195,10 +201,13 @@ def first_last_system_call_feats(tree):
     last_call = None # keep track of last call we've seen
     for el in tree.iter():
         # ignore everything outside the "all_section" element
+        # start of the list of system calls
         if el.tag == "all_section" and not in_all_section:
             in_all_section = True
+        # end of the list of system calls
         elif el.tag == "all_section" and in_all_section:
             in_all_section = False
+        # within 'all_section'
         elif in_all_section:
             if first:
                 c["first_call-"+el.tag] = 1
@@ -209,9 +218,11 @@ def first_last_system_call_feats(tree):
     c["last_call-"+last_call] = 1
     return c
 
+# Counter with number of occurences for each call in whole .xml
 def num_system_call_feats(tree):
     return Counter([i.tag for i in tree.iter()])
 
+# Counter with number of occurrences for each bigram in whole xml
 def num_system_call_bifeats(tree):
     # TODO: try only using system calls within all_section
     bi_calls = []
@@ -222,7 +233,19 @@ def num_system_call_bifeats(tree):
         last_process = curr_process.tag
     return Counter(bi_calls)
 
+def num_system_call_trifeats(tree):
+    tri_calls = []
+    prev_proc = None
+    prev_proc2 = None
+    for cur_proc in tree.iter():
+        if prev_proc2:
+            tri_calls.append((prev_proc2, prev_proc, cur_proc.tag))
+        if prev_proc:
+            prev_proc2 = prev_proc
+        prev_proc = curr_proc.tag
+    return Counter(tri_calls)
 
+# Counter with number of system calls
 def system_call_count_feats(tree):
     """
     arguments:
@@ -237,12 +260,110 @@ def system_call_count_feats(tree):
         # ignore everything outside the "all_section" element
         if el.tag == "all_section" and not in_all_section:
             in_all_section = True
+        # end of the list of system calls
         elif el.tag == "all_section" and in_all_section:
             in_all_section = False
+        # within 'all_section'
         elif in_all_section:
             c['num_system_calls'] += 1
     return c
 
+# Counter with number of occurrences of each system call within all_section
+def num_sys_call_feats(tree):
+    c = Counter()
+    in_all_section = False
+    for el in tree.iter():
+        # ignore everything outside the "all_section" element
+        # start of the list of system calls
+        if el.tag == "all_section" and not in_all_section:
+            in_all_section = True
+        # end of the list of system calls
+        elif el.tag == "all_section" and in_all_section:
+            in_all_section = False
+        # within 'all_section'
+        elif in_all_section:
+            c[el.tag] = c.get(el.tag,0)+1
+    return c
+
+# Counter with number of occurrences for each bigram in system
+def num_sys_call_bifeats(tree):
+    # TODO: try only using system calls within all_section
+    in_all_section = False
+    bi_calls = []
+    last_process = None
+    for el in tree.iter():
+        # ignore everything outside the "all_section" element
+        if el.tag == "all_section" and not in_all_section:
+            in_all_section = True
+        # end of the list of system calls
+        elif el.tag == "all_section" and in_all_section:
+            in_all_section = False
+        elif in_all_section:
+            if last_process:
+                bi_calls.append((last_process, el.tag))
+            last_process = el.tag
+    return Counter(bi_calls)
+
+# Counter with number of occurrences for each bigram in system
+def num_sys_call_trifeats(tree):
+    # TODO: try only using system calls within all_section
+    in_all_section = False
+    tri_calls = []
+    prev_proc = None
+    prev_proc2 = None
+    for cur_proc in tree.iter():
+        # ignore everything outside the "all_section" element
+        if cur_proc.tag == "all_section" and not in_all_section:
+            in_all_section = True
+        # end of the list of system calls
+        elif cur_proc.tag == "all_section" and in_all_section:
+            in_all_section = False
+        elif in_all_section:
+            if prev_proc2:
+                tri_calls.append((prev_proc2, prev_proc, cur_proc.tag))
+            if prev_proc:
+                prev_proc2 = prev_proc
+            prev_proc = cur_proc.tag
+    return Counter(tri_calls)
+
+# Counter with number of occurrences of each system call
+def num_occur_call_feats(tree):
+    return Counter([i.tag for i in tree.iter()])
+
+# Counter with number of processes
+def num_processes_feats(tree):
+    c1 = num_occur_call_feats(tree)
+    c2 = {'num_processes': c1['process']}
+    return c2
+
+# Counter with number of threads
+def num_threads_feats(tree):
+    c1 = num_occur_call_feats(tree)
+    c2 = {'num_threads': c1['thread']}
+    return c2
+
+# Counter with number of tags - estimate for file size
+def num_tags_feats(tree):
+    c1 = num_occur_call_feats(tree)
+    c = {'num_calls': sum(c1.values())}
+    return c
+
+def injected_code_feats(tree):
+    c=Counter()
+    for el in tree.iter():
+        if el.tag=='process':
+            atr = el.attrib
+            if atr['startreason']=='InjectedCode':
+                c['num_inject'] = c.get('num_inject',0)+1
+    return c
+
+def most_common_feats(tree):
+    c1=Counter()
+    c=num_sys_call_feats(tree)
+    x=sorted(c, key=c.get, reverse=True)
+    most_common = x[0]
+    c1['most_common-'+most_common]=1
+    return c1
 
 ## The following function does the feature extraction, learning, and prediction
 def main():
@@ -251,11 +372,23 @@ def main():
     outputfile = "mypredictions.csv"  # feel free to change this or take it as an argument
     
     # TODO put the names of the feature functions you've defined above in this list
-    ffs = [first_last_system_call_feats, system_call_count_feats]
-    
+    # ffs = [first_last_system_call_feats, system_call_count_feats]
+    ffs = [first_last_system_call_feats, system_call_count_feats, num_sys_call_feats, num_sys_call_bifeats, num_processes_feats, num_threads_feats, num_tags_feats]
+    # ffs = [first_last_system_call_feats, system_call_count_feats, num_sys_call_feats, num_sys_call_bifeats, num_sys_call_trifeats, num_processes_feats, num_threads_feats, num_tags_feats, injected_code_feats, most_common_feats]
+    # ffs = [first_last_system_call_feats, system_call_count_feats, num_system_call_feats, num_system_call_bifeats, num_system_call_trifeats, num_tags_feats, injected_code_feats]
+    # ffs = [num_sys_call_feats, num_sys_call_bifeats]
     # extract features
     print "extracting training features..."
     X_train,global_feat_dict,t_train,train_ids = extract_feats(ffs, train_dir)
+
+    # Track number of each class
+    # spam = Counter()
+    # n=0
+    # for i in t_train:
+    #     spam[i]=spam.get(i,0)+1
+    #     n+=1
+    # print spam
+    # assert(n==3086)
 
     with open('X_train.pkl','w') as f:
         pickle.dump(X_train, f)
@@ -266,16 +399,40 @@ def main():
     print "done extracting training features"
     print
     
-    print global_feat_dict
+    # print global_feat_dict
+
+    # with open('X_train_RF_counts.pkl','w') as f:
+    #     pickle.dump(X_train, f)
+
 
     print "learning..."
     
-    gnb = GaussianNB()
-    gnb.fit(X_train.todense(), t_train)
+    # gnb = GaussianNB()
+    # gnb.fit(X_train.todense(), t_train)
+    rf = RandomForestClassifier(n_estimators=1000, max_features=None)
+    rf.fit(X_train.todense(), t_train)
 
     print "done learning"
     print
-    
+
+    # cross validation
+    print "cross validation..."
+    scores = cross_val_score(gnb, X_train.todense(), t_train, cv=5)
+    # scores = cross_val_score(rf, X_train.todense(), t_train, cv=5)
+    print scores
+    print
+
+    # Grid Search CV
+    # print "grid search..."
+    # RF = RandomForestClassifier(max_features=None)
+    # RF_params = {'n_estimators':[100,1000,2000,5000,10000]}
+    # gsc = GridSearchCV(estimator=RF, param_grid=RF_params, cv=5)
+    # gsc.fit(X_train.todense(), t_train)
+    # print "grid search done"
+    # print "Best score:", gsc.best_score_
+    # print "Best estimator:", gsc.best_estimator_
+    # print
+
     # get rid of training data and load test data
     del X_train
     del t_train
@@ -283,16 +440,42 @@ def main():
     print "extracting test features..."
     X_test,_,t_ignore,test_ids = extract_feats(ffs, test_dir, global_feat_dict=global_feat_dict)
     print "done extracting test features"
-    print
+    # # with open('X_test_RF_counts.pkl','w') as f:
+    # #     pickle.dump(X_test, f)
 
     with open('X_test.pkl','w') as f:
         pickle.dump(X_test, f)
     
     with open('test_ids.pkl','w') as f:
         pickle.dump(test_ids, f)
+    print
+
+    # Measure accuracy on each class in the training data
+    # print "testing on train data..."
+    # pred_train = rf.predict(X_train.todense())
+    # print pred_train
+    # print t_train
+    # spam_pred = Counter()
+    # n1=0
+    # for i in range(n):
+    #     c=t_train[i]
+    #     if c==pred_train[i]:
+    #         spam_pred[c]=spam_pred.get(c,0)+1
+    #         n1+=1
+    # print spam_pred
+    # for i in spam_pred.keys():
+    #     num_pred = spam_pred[i]
+    #     num_act = spam[i]
+    #     acc = float(num_pred)/num_act
+    #     print "Percentage of class",i,"classified correctly:", "{0:.3f}".format(acc),"(",num_pred,"out of",num_act,")"
+    # overall_acc = float(n1)/n
+    # print "Overall accuracy:", "{0:.3f}".format(overall_acc)
+    # print
 
     print "making predictions..."
-    preds = gnb.predict(X_test.todense())
+    # preds = gnb.predict(X_test.todense())
+    preds = rf.predict(X_test.todense())
+    # preds = gsc.predict(X_test.todense())    
 
     print "done making predictions"
     print
